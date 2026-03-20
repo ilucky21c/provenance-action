@@ -1,0 +1,26 @@
+name: 'Validate PROVENANCE.yml'
+description: 'Validates your PROVENANCE.yml file against the Provenance protocol specification'
+author: 'Provenance Protocol'
+branding:
+  icon: 'shield'
+  color: 'blue'
+
+inputs:
+  file-path:
+    description: 'Path to PROVENANCE.yml file'
+    required: false
+    default: 'PROVENANCE.yml'
+  fail-on-error:
+    description: 'Fail the build if validation fails'
+    required: false
+    default: 'true'
+
+outputs:
+  valid:
+    description: 'Whether the PROVENANCE.yml is valid'
+  errors:
+    description: 'Validation errors, if any'
+
+runs:
+  using: 'node20'
+  main: 'dist/index.js'
