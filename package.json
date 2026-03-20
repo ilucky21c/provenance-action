@@ -9,6 +9,10 @@
   "keywords": ["github-action", "provenance", "validation", "ai-agent"],
   "author": "Provenance Protocol",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/ilucky21c/provenance-action"
+  },
   "dependencies": {
     "@actions/core": "^1.10.0",
     "@actions/github": "^5.1.1",
