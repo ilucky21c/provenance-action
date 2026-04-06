@@ -31674,25 +31674,27 @@ const fs = __nccwpck_require__(9896);
 const path = __nccwpck_require__(6928);
 const yaml = __nccwpck_require__(4281);
 
-// Canonical capability taxonomy
+// Standard capability vocabulary — https://getprovenance.dev/docs#capabilities
 const CANONICAL_CAPABILITIES = [
   'read:web',
-  'read:filesystem',
-  'write:filesystem',
-  'execute:code',
-  'network:outbound',
-  'database:read',
-  'database:write',
-  'api:external',
+  'write:code',
+  'write:files',
+  'write:email',
+  'write:summaries',
+  'execute:shell',
+  'execute:browser',
+  'delegate:agents',
+  'ajp:receiver',
+  'ajp:sender',
 ];
 
-// Canonical constraint taxonomy
+// Standard constraint vocabulary — https://getprovenance.dev/docs#capabilities
 const CANONICAL_CONSTRAINTS = [
-  'no:financial:transact',
   'no:pii',
-  'no:data:export',
-  'no:code:execute',
-  'no:system:modify',
+  'no:financial:transact',
+  'no:external:network',
+  'no:persist:data',
+  'no:user:impersonation',
 ];
 
 function validateProvenanceYml(content) {
@@ -31711,8 +31713,8 @@ function validateProvenanceYml(content) {
   // Required fields
   if (!parsed.provenance) {
     errors.push('Missing required field: provenance');
-  } else if (parsed.provenance !== '1.0') {
-    warnings.push(`Provenance version "${parsed.provenance}" may not be supported. Recommended: "1.0"`);
+  } else if (String(parsed.provenance) !== '0.1') {
+    warnings.push(`Provenance version "${parsed.provenance}" may not be supported. Current version: "0.1"`);
   }
 
   if (!parsed.name) {
@@ -31784,16 +31786,26 @@ function validateProvenanceYml(content) {
     }
   }
 
-  // Verification validation
-  if (parsed.verification) {
-    if (typeof parsed.verification !== 'object') {
-      errors.push('Field "verification" must be an object');
+  // provenance_id recommendation
+  if (!parsed.provenance_id) {
+    warnings.push('Recommended field missing: provenance_id (e.g. provenance:github:your-org/your-agent)');
+  }
+
+  // Identity block validation (for verified agents)
+  if (parsed.identity) {
+    if (typeof parsed.identity !== 'object') {
+      errors.push('Field "identity" must be an object');
     } else {
-      if (!parsed.verification.provider) {
-        errors.push('Field "verification.provider" is required when verification is specified');
+      if (!parsed.identity.public_key) {
+        errors.push('Field "identity.public_key" is required when identity is specified');
       }
-      if (!parsed.verification.report_url) {
-        warnings.push('Recommended field missing: verification.report_url');
+      if (!parsed.identity.algorithm) {
+        warnings.push('Recommended field missing: identity.algorithm (expected: ed25519)');
+      } else if (parsed.identity.algorithm !== 'ed25519') {
+        warnings.push(`identity.algorithm "${parsed.identity.algorithm}" is non-standard. Expected: ed25519`);
+      }
+      if (!parsed.identity.signature) {
+        warnings.push('identity.signature is missing — required for identity_verified: true on registration');
       }
     }
   }
