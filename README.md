@@ -1,6 +1,6 @@
 # Provenance GitHub Action
 
-Validates your `PROVENANCE.yml` file against the [Provenance Protocol](https://provenance.dev) specification in CI/CD.
+Validates your `PROVENANCE.yml` file against the [Provenance Protocol](https://getprovenance.dev) specification in CI/CD.
 
 ## Usage
 
