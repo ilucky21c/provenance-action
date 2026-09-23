@@ -1,5 +1,5 @@
 name: 'Validate PROVENANCE.yml'
-description: 'Validates your PROVENANCE.yml file against the Provenance protocol specification'
+description: 'Validates and cryptographically verifies your PROVENANCE.yml against the Provenance protocol specification'
 author: 'Provenance Protocol'
 branding:
   icon: 'shield'
@@ -14,12 +14,26 @@ inputs:
     description: 'Fail the build if validation fails'
     required: false
     default: 'true'
+  verify-signature:
+    description: 'Cryptographically verify identity.signature when present. Catches a declaration edited after it was signed.'
+    required: false
+    default: 'true'
+  require-signature:
+    description: 'Fail when the declaration carries no signature at all'
+    required: false
+    default: 'false'
+  check-repository:
+    description: 'Check that provenance_id names the repository this runs in. Catches a fork carrying the original declaration.'
+    required: false
+    default: 'true'
 
 outputs:
   valid:
     description: 'Whether the PROVENANCE.yml is valid'
   errors:
     description: 'Validation errors, if any'
+  signature:
+    description: "Signature result: 'declaration' (0.2, whole file covered), 'identity' (0.1, identity only), 'invalid', or 'none'" 
 
 runs:
   using: 'node20'

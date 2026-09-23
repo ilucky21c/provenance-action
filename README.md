@@ -1,5 +1,13 @@
 # Provenance GitHub Action
 
+Validates a `PROVENANCE.yml` **and cryptographically verifies it** — catching the
+two failures that a shape check cannot see:
+
+- a declaration **edited after it was signed** (the signature no longer matches)
+- a **fork carrying the upstream declaration**, which claims to be someone else's agent
+
+Both look perfectly well-formed to a validator.
+
 Validates your `PROVENANCE.yml` file against the [Provenance Protocol](https://getprovenance.dev) specification in CI/CD.
 
 ## Usage
@@ -81,3 +89,29 @@ contact:
 ## License
 
 MIT
+
+## Inputs
+
+| Input | Default | |
+|---|---|---|
+| `file-path` | `PROVENANCE.yml` | Where the declaration is |
+| `fail-on-error` | `true` | Fail the build on validation errors |
+| `verify-signature` | `true` | Cryptographically verify `identity.signature` when present |
+| `require-signature` | `false` | Fail when the declaration carries no signature at all |
+| `check-repository` | `true` | Check `provenance_id` names the repository this runs in |
+
+## Outputs
+
+| Output | |
+|---|---|
+| `valid` | `true` / `false` |
+| `errors` | Validation errors, newline separated |
+| `signature` | `declaration` (spec 0.2 — whole file covered), `identity` (spec 0.1 — identity only), `invalid`, `none`, or `unchecked` |
+
+## A note on spec versions
+
+Under spec **0.2** a signature covers the whole declaration, so deleting a
+constraint breaks it. Under **0.1** it covered only the identity and key — your
+declared capabilities and constraints were not protected. Both validate here,
+but a 0.1 file gets a warning saying so, and `signature` reports which coverage
+was found.

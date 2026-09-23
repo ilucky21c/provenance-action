@@ -3,6 +3,10 @@ const fs = require('fs');
 const path = require('path');
 const yaml = require('js-yaml');
 
+// Spec versions this action understands. 0.2 signs the whole declaration;
+// 0.1 signs only the identity, leaving capabilities and constraints unprotected.
+const KNOWN_SPEC_VERSIONS = ['0.1', '0.2'];
+
 // Standard capability vocabulary — https://getprovenance.dev/docs#capabilities
 const CANONICAL_CAPABILITIES = [
   'read:web',
@@ -42,8 +46,12 @@ function validateProvenanceYml(content) {
   // Required fields
   if (!parsed.provenance) {
     errors.push('Missing required field: provenance');
-  } else if (String(parsed.provenance) !== '0.1') {
-    warnings.push(`Provenance version "${parsed.provenance}" may not be supported. Current version: "0.1"`);
+  } else if (!KNOWN_SPEC_VERSIONS.includes(String(parsed.provenance))) {
+    // Unknown versions warn rather than fail: a reader written for today's spec
+    // must not break a build because a file uses a later one.
+    warnings.push(
+      `Provenance version "${parsed.provenance}" is not known to this action. Known versions: ${KNOWN_SPEC_VERSIONS.join(', ')}`
+    );
   }
 
   if (!parsed.name) {
@@ -134,7 +142,9 @@ function validateProvenanceYml(content) {
         warnings.push(`identity.algorithm "${parsed.identity.algorithm}" is non-standard. Expected: ed25519`);
       }
       if (!parsed.identity.signature) {
-        warnings.push('identity.signature is missing — required for identity_verified: true on registration');
+        warnings.push(
+          'identity.signature is missing — this declaration is not tamper-evident. Sign it with signDeclaration() from provenance-protocol/keygen'
+        );
       }
     }
   }
@@ -147,10 +157,74 @@ function validateProvenanceYml(content) {
   };
 }
 
+/**
+ * Verify the declaration's signature, and check that it belongs to this repo.
+ *
+ * Shape validation cannot catch the two failures that actually matter: a
+ * declaration edited after it was signed, and a fork carrying the original's
+ * declaration. Both look perfectly well-formed.
+ */
+async function verifyIdentity(parsed, { checkRepository }) {
+  const errors = [];
+  const warnings = [];
+  const notes = [];
+  let signatureState = 'none';
+
+  // The verifier is ESM; this action is CommonJS. A dynamic import is bundled
+  // as an async chunk, so dist/ still runs standalone with no node_modules.
+  const { verifyDeclaration, checkLocation } = await import('provenance-protocol/verify');
+
+  if (parsed.identity && parsed.identity.signature) {
+    const result = await verifyDeclaration(parsed);
+
+    if (!result.valid) {
+      signatureState = 'invalid';
+      errors.push(
+        `identity.signature does not verify: ${result.reason || 'unknown reason'}. ` +
+          'If you edited this file after signing it, re-sign it.'
+      );
+    } else if ((signatureState = result.coverage) === 'identity') {
+      // Valid, but for 0.1 that means far less than people assume.
+      warnings.push(
+        'identity.signature is valid but covers only provenance_id and public_key — your declared ' +
+          'capabilities and constraints are NOT protected by it. Set provenance: "0.2" and re-sign ' +
+          'with signDeclaration() to cover the whole declaration.'
+      );
+    } else {
+      notes.push('identity.signature verifies and covers the whole declaration');
+    }
+  }
+
+  // In CI we know which repository we are in, so the location check that a
+  // remote verifier would do can be done here — and it catches a fork that kept
+  // the upstream declaration, which is the impersonation case.
+  const repo = process.env.GITHUB_REPOSITORY;
+  if (checkRepository && repo && typeof parsed.provenance_id === 'string') {
+    const location = checkLocation(parsed.provenance_id, `https://github.com/${repo}`);
+    if (location === 'mismatch') {
+      errors.push(
+        `provenance_id "${parsed.provenance_id}" does not name this repository (${repo}). ` +
+          'If this is a fork, change provenance_id to your own repository or remove the declaration — ' +
+          "as it stands the file claims to be someone else's agent."
+      );
+    } else if (location === 'match') {
+      notes.push(`provenance_id matches this repository (${repo})`);
+    }
+  }
+
+  return { errors, warnings, notes, signatureState };
+}
+
 async function run() {
   try {
     const filePath = core.getInput('file-path') || 'PROVENANCE.yml';
-    const failOnError = core.getInput('fail-on-error') === 'true';
+    // Default to true when the input is absent. action.yml declares 'true', and
+    // an action that quietly stops failing because an input was not passed is
+    // the worst kind of broken check: every build goes green regardless.
+    const failOnError = (core.getInput('fail-on-error') || 'true') === 'true';
+    const verifySignature = (core.getInput('verify-signature') || 'true') === 'true';
+    const requireSignature = (core.getInput('require-signature') || 'false') === 'true';
+    const checkRepository = (core.getInput('check-repository') || 'true') === 'true';
 
     // Check if file exists
     if (!fs.existsSync(filePath)) {
@@ -163,6 +237,27 @@ async function run() {
     // Read and validate
     const content = fs.readFileSync(filePath, 'utf8');
     const result = validateProvenanceYml(content);
+
+    if (requireSignature && result.parsed && !(result.parsed.identity && result.parsed.identity.signature)) {
+      result.errors.push('identity.signature is required (require-signature is enabled) but is absent');
+      result.valid = false;
+    }
+
+    // Only worth verifying a file that parsed; a shape failure already reported.
+    if (verifySignature && result.parsed) {
+      try {
+        const identity = await verifyIdentity(result.parsed, { checkRepository });
+        result.errors.push(...identity.errors);
+        result.warnings.push(...identity.warnings);
+        identity.notes.forEach((n) => core.info(`\u2713 ${n}`));
+        if (identity.errors.length > 0) result.valid = false;
+        core.setOutput('signature', identity.signatureState);
+      } catch (e) {
+        // A verifier that cannot run must not be reported as a bad declaration.
+        core.warning(`Signature could not be verified: ${e.message}. The declaration was not checked cryptographically.`);
+        core.setOutput('signature', 'unchecked');
+      }
+    }
 
     // Output results
     core.setOutput('valid', result.valid ? 'true' : 'false');

@@ -31662,10 +31662,94 @@ module.exports = parseParams
 /******/ 		return module.exports;
 /******/ 	}
 /******/ 	
+/******/ 	// expose the modules object (__webpack_modules__)
+/******/ 	__nccwpck_require__.m = __webpack_modules__;
+/******/ 	
 /************************************************************************/
+/******/ 	/* webpack/runtime/define property getters */
+/******/ 	(() => {
+/******/ 		// define getter functions for harmony exports
+/******/ 		__nccwpck_require__.d = (exports, definition) => {
+/******/ 			for(var key in definition) {
+/******/ 				if(__nccwpck_require__.o(definition, key) && !__nccwpck_require__.o(exports, key)) {
+/******/ 					Object.defineProperty(exports, key, { enumerable: true, get: definition[key] });
+/******/ 				}
+/******/ 			}
+/******/ 		};
+/******/ 	})();
+/******/ 	
+/******/ 	/* webpack/runtime/ensure chunk */
+/******/ 	(() => {
+/******/ 		__nccwpck_require__.f = {};
+/******/ 		// This file contains only the entry chunk.
+/******/ 		// The chunk loading function for additional chunks
+/******/ 		__nccwpck_require__.e = (chunkId) => {
+/******/ 			return Promise.all(Object.keys(__nccwpck_require__.f).reduce((promises, key) => {
+/******/ 				__nccwpck_require__.f[key](chunkId, promises);
+/******/ 				return promises;
+/******/ 			}, []));
+/******/ 		};
+/******/ 	})();
+/******/ 	
+/******/ 	/* webpack/runtime/get javascript chunk filename */
+/******/ 	(() => {
+/******/ 		// This function allow to reference async chunks
+/******/ 		__nccwpck_require__.u = (chunkId) => {
+/******/ 			// return url for filenames based on template
+/******/ 			return "" + chunkId + ".index.js";
+/******/ 		};
+/******/ 	})();
+/******/ 	
+/******/ 	/* webpack/runtime/hasOwnProperty shorthand */
+/******/ 	(() => {
+/******/ 		__nccwpck_require__.o = (obj, prop) => (Object.prototype.hasOwnProperty.call(obj, prop))
+/******/ 	})();
+/******/ 	
 /******/ 	/* webpack/runtime/compat */
 /******/ 	
 /******/ 	if (typeof __nccwpck_require__ !== 'undefined') __nccwpck_require__.ab = __dirname + "/";
+/******/ 	
+/******/ 	/* webpack/runtime/require chunk loading */
+/******/ 	(() => {
+/******/ 		// no baseURI
+/******/ 		
+/******/ 		// object to store loaded chunks
+/******/ 		// "1" means "loaded", otherwise not loaded yet
+/******/ 		var installedChunks = {
+/******/ 			792: 1
+/******/ 		};
+/******/ 		
+/******/ 		// no on chunks loaded
+/******/ 		
+/******/ 		var installChunk = (chunk) => {
+/******/ 			var moreModules = chunk.modules, chunkIds = chunk.ids, runtime = chunk.runtime;
+/******/ 			for(var moduleId in moreModules) {
+/******/ 				if(__nccwpck_require__.o(moreModules, moduleId)) {
+/******/ 					__nccwpck_require__.m[moduleId] = moreModules[moduleId];
+/******/ 				}
+/******/ 			}
+/******/ 			if(runtime) runtime(__nccwpck_require__);
+/******/ 			for(var i = 0; i < chunkIds.length; i++)
+/******/ 				installedChunks[chunkIds[i]] = 1;
+/******/ 		
+/******/ 		};
+/******/ 		
+/******/ 		// require() chunk loading for javascript
+/******/ 		__nccwpck_require__.f.require = (chunkId, promises) => {
+/******/ 			// "1" is the signal for "already loaded"
+/******/ 			if(!installedChunks[chunkId]) {
+/******/ 				if(true) { // all chunks have JS
+/******/ 					installChunk(require("./" + __nccwpck_require__.u(chunkId)));
+/******/ 				} else installedChunks[chunkId] = 1;
+/******/ 			}
+/******/ 		};
+/******/ 		
+/******/ 		// no external install chunk
+/******/ 		
+/******/ 		// no HMR
+/******/ 		
+/******/ 		// no HMR manifest
+/******/ 	})();
 /******/ 	
 /************************************************************************/
 var __webpack_exports__ = {};
@@ -31673,6 +31757,10 @@ const core = __nccwpck_require__(7484);
 const fs = __nccwpck_require__(9896);
 const path = __nccwpck_require__(6928);
 const yaml = __nccwpck_require__(4281);
+
+// Spec versions this action understands. 0.2 signs the whole declaration;
+// 0.1 signs only the identity, leaving capabilities and constraints unprotected.
+const KNOWN_SPEC_VERSIONS = ['0.1', '0.2'];
 
 // Standard capability vocabulary — https://getprovenance.dev/docs#capabilities
 const CANONICAL_CAPABILITIES = [
@@ -31713,8 +31801,12 @@ function validateProvenanceYml(content) {
   // Required fields
   if (!parsed.provenance) {
     errors.push('Missing required field: provenance');
-  } else if (String(parsed.provenance) !== '0.1') {
-    warnings.push(`Provenance version "${parsed.provenance}" may not be supported. Current version: "0.1"`);
+  } else if (!KNOWN_SPEC_VERSIONS.includes(String(parsed.provenance))) {
+    // Unknown versions warn rather than fail: a reader written for today's spec
+    // must not break a build because a file uses a later one.
+    warnings.push(
+      `Provenance version "${parsed.provenance}" is not known to this action. Known versions: ${KNOWN_SPEC_VERSIONS.join(', ')}`
+    );
   }
 
   if (!parsed.name) {
@@ -31805,7 +31897,9 @@ function validateProvenanceYml(content) {
         warnings.push(`identity.algorithm "${parsed.identity.algorithm}" is non-standard. Expected: ed25519`);
       }
       if (!parsed.identity.signature) {
-        warnings.push('identity.signature is missing — required for identity_verified: true on registration');
+        warnings.push(
+          'identity.signature is missing — this declaration is not tamper-evident. Sign it with signDeclaration() from provenance-protocol/keygen'
+        );
       }
     }
   }
@@ -31818,10 +31912,74 @@ function validateProvenanceYml(content) {
   };
 }
 
+/**
+ * Verify the declaration's signature, and check that it belongs to this repo.
+ *
+ * Shape validation cannot catch the two failures that actually matter: a
+ * declaration edited after it was signed, and a fork carrying the original's
+ * declaration. Both look perfectly well-formed.
+ */
+async function verifyIdentity(parsed, { checkRepository }) {
+  const errors = [];
+  const warnings = [];
+  const notes = [];
+  let signatureState = 'none';
+
+  // The verifier is ESM; this action is CommonJS. A dynamic import is bundled
+  // as an async chunk, so dist/ still runs standalone with no node_modules.
+  const { verifyDeclaration, checkLocation } = await __nccwpck_require__.e(/* import() */ 849).then(__nccwpck_require__.bind(__nccwpck_require__, 849));
+
+  if (parsed.identity && parsed.identity.signature) {
+    const result = await verifyDeclaration(parsed);
+
+    if (!result.valid) {
+      signatureState = 'invalid';
+      errors.push(
+        `identity.signature does not verify: ${result.reason || 'unknown reason'}. ` +
+          'If you edited this file after signing it, re-sign it.'
+      );
+    } else if ((signatureState = result.coverage) === 'identity') {
+      // Valid, but for 0.1 that means far less than people assume.
+      warnings.push(
+        'identity.signature is valid but covers only provenance_id and public_key — your declared ' +
+          'capabilities and constraints are NOT protected by it. Set provenance: "0.2" and re-sign ' +
+          'with signDeclaration() to cover the whole declaration.'
+      );
+    } else {
+      notes.push('identity.signature verifies and covers the whole declaration');
+    }
+  }
+
+  // In CI we know which repository we are in, so the location check that a
+  // remote verifier would do can be done here — and it catches a fork that kept
+  // the upstream declaration, which is the impersonation case.
+  const repo = process.env.GITHUB_REPOSITORY;
+  if (checkRepository && repo && typeof parsed.provenance_id === 'string') {
+    const location = checkLocation(parsed.provenance_id, `https://github.com/${repo}`);
+    if (location === 'mismatch') {
+      errors.push(
+        `provenance_id "${parsed.provenance_id}" does not name this repository (${repo}). ` +
+          'If this is a fork, change provenance_id to your own repository or remove the declaration — ' +
+          "as it stands the file claims to be someone else's agent."
+      );
+    } else if (location === 'match') {
+      notes.push(`provenance_id matches this repository (${repo})`);
+    }
+  }
+
+  return { errors, warnings, notes, signatureState };
+}
+
 async function run() {
   try {
     const filePath = core.getInput('file-path') || 'PROVENANCE.yml';
-    const failOnError = core.getInput('fail-on-error') === 'true';
+    // Default to true when the input is absent. action.yml declares 'true', and
+    // an action that quietly stops failing because an input was not passed is
+    // the worst kind of broken check: every build goes green regardless.
+    const failOnError = (core.getInput('fail-on-error') || 'true') === 'true';
+    const verifySignature = (core.getInput('verify-signature') || 'true') === 'true';
+    const requireSignature = (core.getInput('require-signature') || 'false') === 'true';
+    const checkRepository = (core.getInput('check-repository') || 'true') === 'true';
 
     // Check if file exists
     if (!fs.existsSync(filePath)) {
@@ -31834,6 +31992,27 @@ async function run() {
     // Read and validate
     const content = fs.readFileSync(filePath, 'utf8');
     const result = validateProvenanceYml(content);
+
+    if (requireSignature && result.parsed && !(result.parsed.identity && result.parsed.identity.signature)) {
+      result.errors.push('identity.signature is required (require-signature is enabled) but is absent');
+      result.valid = false;
+    }
+
+    // Only worth verifying a file that parsed; a shape failure already reported.
+    if (verifySignature && result.parsed) {
+      try {
+        const identity = await verifyIdentity(result.parsed, { checkRepository });
+        result.errors.push(...identity.errors);
+        result.warnings.push(...identity.warnings);
+        identity.notes.forEach((n) => core.info(`\u2713 ${n}`));
+        if (identity.errors.length > 0) result.valid = false;
+        core.setOutput('signature', identity.signatureState);
+      } catch (e) {
+        // A verifier that cannot run must not be reported as a bad declaration.
+        core.warning(`Signature could not be verified: ${e.message}. The declaration was not checked cryptographically.`);
+        core.setOutput('signature', 'unchecked');
+      }
+    }
 
     // Output results
     core.setOutput('valid', result.valid ? 'true' : 'false');
