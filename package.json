@@ -1,6 +1,6 @@
 {
   "name": "provenance-action",
-  "version": "1.1.0",
+  "version": "1.1.1",
   "description": "GitHub Action to validate PROVENANCE.yml files",
   "main": "dist/index.js",
   "scripts": {
@@ -23,5 +23,13 @@
   },
   "devDependencies": {
     "@vercel/ncc": "^0.38.0"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ilucky21c/provenance-action.git"
+  },
+  "homepage": "https://getprovenance.dev",
+  "bugs": {
+    "url": "https://github.com/ilucky21c/provenance-action/issues"
   }
 }
