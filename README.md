@@ -61,6 +61,25 @@ The action warns about non-standard capabilities and constraints, encouraging us
 - `valid`: `"true"` or `"false"`
 - `errors`: Validation errors (newline-separated)
 
+## Signed release notes (optional)
+
+Give the action the agent's private key and it issues a signed notice tying
+this release to the exact declaration it shipped with — which build carried
+which promises. Send it to any watchers you choose, or none.
+
+```yaml
+      - uses: ilucky21c/provenance-action@v1
+        with:
+          release-private-key: ${{ secrets.PROVENANCE_PRIVATE_KEY }}
+          notify-urls: 'https://watcher.example/notices'   # optional
+```
+
+On a tag the version is the tag name; otherwise set `release-version`. The
+notice is also available as the `release-notice` output. The key is masked in
+logs and used only in the runner. Holding it as a CI secret is a trade-off; if
+you would rather not, `provenance-middleware` announces each deployment from
+the running service instead.
+
 ## Example PROVENANCE.yml
 
 ```yaml

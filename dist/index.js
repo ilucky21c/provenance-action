@@ -31634,7 +31634,7 @@ module.exports = parseParams
 /***/ ((module) => {
 
 "use strict";
-module.exports = /*#__PURE__*/JSON.parse('{"$comment":"Standard vocabulary for PROVENANCE.yml capabilities and constraints. Normative source: SPEC.md, Capability Vocabulary. Custom terms are allowed with a domain prefix (acme:custom-capability).","version":"0.2","capabilities":{"read:web":"fetch public web content","read:files":"read local files","read:database":"query databases","read:email":"read email (requires auth)","read:calendar":"read calendar (requires auth)","read:code":"read code repositories","read:pdf":"parse PDF documents","read:images":"process images","read:audio":"process audio","write:files":"write local files","write:database":"write to databases","write:email":"send email","write:code":"modify code","write:summaries":"generate written content","write:external":"any external system write","execute:code":"run code in a sandbox","execute:terminal":"run terminal commands","execute:browser":"control a browser","financial:read":"read financial data","financial:transact":"initiate financial transactions","delegate:agents":"can spawn or hire sub-agents","delegate:humans":"can request human approval"},"constraints":{"rule":"Any standard capability prefixed with no: is a standard constraint — a commitment never to exercise it.","additional":{"no:pii":"will never collect personal data"}},"namespaces":{"ajp":{"ajp:receiver":"accepts jobs under the Agent Job Protocol","ajp:sender":"sends jobs under the Agent Job Protocol"}}}');
+module.exports = /*#__PURE__*/JSON.parse('{"$comment":"Standard vocabulary for PROVENANCE.yml capabilities and constraints. Normative source: SPEC.md, Capability Vocabulary. Custom terms are allowed with a domain prefix (acme:custom-capability).","version":"0.2","capabilities":{"read:web":"fetch public web content","read:files":"read local files","read:database":"query databases","read:email":"read email (requires auth)","read:calendar":"read calendar (requires auth)","read:code":"read code repositories","read:pdf":"parse PDF documents","read:images":"process images","read:audio":"process audio","write:files":"write local files","write:database":"write to databases","write:email":"send email","write:code":"modify code","write:summaries":"generate written content","write:external":"any external system write","execute:code":"run code in a sandbox","execute:terminal":"run terminal commands","execute:browser":"control a browser","financial:read":"read financial data","financial:transact":"initiate financial transactions","delegate:agents":"can spawn or hire sub-agents","delegate:humans":"can request human approval"},"constraints":{"rule":"Any standard capability prefixed with no: is a standard constraint — a commitment never to exercise it.","additional":{"no:pii":"will never collect personal data"}},"namespaces":{"ajp":{"ajp:receiver":"accepts jobs under the Agent Job Protocol","ajp:sender":"sends jobs under the Agent Job Protocol"}},"data_categories":{"customer_content":"content the customer supplies or the agent produces for them","personal":"information about an identifiable person","special_category":"health, biometric, genetic, political, religious and similar sensitive personal data","financial":"account, card or transaction data","credentials":"passwords, tokens, keys"},"subprocessor_roles":["model_provider","hosting","storage","tool","other"],"dependency_kinds":["mcp_server","agent","api","package"],"training_use":{"none":"never used for training","opt_in":"used only when the customer opts in","opt_out":"used unless the customer opts out","yes":"used"}}');
 
 /***/ })
 
@@ -31924,7 +31924,7 @@ async function verifyIdentity(parsed, { checkRepository }) {
 
   // The verifier is ESM; this action is CommonJS. A dynamic import is bundled
   // as an async chunk, so dist/ still runs standalone with no node_modules.
-  const { verifyDeclaration, checkLocation } = await __nccwpck_require__.e(/* import() */ 849).then(__nccwpck_require__.bind(__nccwpck_require__, 849));
+  const { verifyDeclaration, checkLocation } = await __nccwpck_require__.e(/* import() */ 37).then(__nccwpck_require__.bind(__nccwpck_require__, 9037));
 
   if (parsed.identity && parsed.identity.signature) {
     const result = await verifyDeclaration(parsed);
@@ -31965,6 +31965,87 @@ async function verifyIdentity(parsed, { checkRepository }) {
   }
 
   return { errors, warnings, notes, signatureState };
+}
+
+/**
+ * Issue a signed release notice: "this release shipped with this declaration".
+ * Opt-in — it needs the agent's private key as a CI secret, which not every
+ * operator will want to hold there. Every reason it does not happen is said
+ * out loud; a release notice that silently fails to appear looks exactly like
+ * one that was never configured.
+ */
+async function releaseNotice(parsed, privateKey) {
+  const { keyFingerprint, declarationDigest } = await __nccwpck_require__.e(/* import() */ 37).then(__nccwpck_require__.bind(__nccwpck_require__, 9037));
+  const { signNotice } = await __nccwpck_require__.e(/* import() */ 891).then(__nccwpck_require__.bind(__nccwpck_require__, 4891));
+  const { createPrivateKey, createPublicKey } = __nccwpck_require__(6982);
+
+  const version = core.getInput('release-version') ||
+    (process.env.GITHUB_REF_TYPE === 'tag' ? process.env.GITHUB_REF_NAME : '');
+  if (!version) {
+    return { skipped: 'no release version — set release-version, or run on a tag' };
+  }
+  const provenanceId = parsed.provenance_id;
+  const publicKey = parsed.identity && parsed.identity.public_key;
+  if (typeof provenanceId !== 'string' || typeof publicKey !== 'string') {
+    return { error: 'a release notice needs provenance_id and identity.public_key in the declaration' };
+  }
+
+  let derived;
+  try {
+    const priv = createPrivateKey({ key: Buffer.from(privateKey, 'base64'), format: 'der', type: 'pkcs8' });
+    derived = Buffer.from(createPublicKey(priv).export({ type: 'spki', format: 'der' })).toString('base64');
+  } catch {
+    return { error: 'release-private-key is not a base64 PKCS8 Ed25519 key' };
+  }
+  if (derived !== publicKey) {
+    return { error: 'release-private-key does not match identity.public_key in the declaration' };
+  }
+
+  let digest;
+  try {
+    digest = await declarationDigest(parsed);
+  } catch (e) {
+    return { error: `declaration cannot be digested: ${e.message}` };
+  }
+
+  const sha = process.env.GITHUB_SHA;
+  const repo = process.env.GITHUB_REPOSITORY;
+  const notice = {
+    notice: '0.1',
+    id: `release-${version}-${(sha || '').slice(0, 12) || Date.now().toString(36)}`,
+    event: 'release',
+    provenance_id: provenanceId,
+    key_fingerprint: await keyFingerprint(publicKey),
+    issued_at: new Date().toISOString().replace(/\.\d{3}Z$/, 'Z'),
+    claims: {
+      version,
+      ...(sha && /^[0-9a-f]{7,64}$/.test(sha) ? { commit: sha } : {}),
+      declaration_digest: digest,
+      ...(repo ? { repository: `${process.env.GITHUB_SERVER_URL || 'https://github.com'}/${repo}` } : {}),
+    },
+  };
+  return { notice: { ...notice, signature: signNotice(privateKey, notice) } };
+}
+
+async function deliver(notice, urls) {
+  for (const url of urls) {
+    try {
+      if (new URL(url).protocol !== 'https:') throw new Error('watcher URLs must be https');
+      const res = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(notice),
+        redirect: 'error',
+        signal: AbortSignal.timeout(10000),
+      });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      core.info(`\u2713 Release notice delivered to ${url}`);
+    } catch (e) {
+      // A watcher being down must not fail the release, but must not pass
+      // unnoticed either.
+      core.warning(`Release notice not delivered to ${url}: ${e.message}`);
+    }
+  }
 }
 
 async function run() {
@@ -32008,6 +32089,27 @@ async function run() {
         // A verifier that cannot run must not be reported as a bad declaration.
         core.warning(`Signature could not be verified: ${e.message}. The declaration was not checked cryptographically.`);
         core.setOutput('signature', 'unchecked');
+      }
+    }
+
+    const releaseKey = core.getInput('release-private-key');
+    if (releaseKey) {
+      core.setSecret(releaseKey);
+      if (!result.valid || !result.parsed) {
+        core.warning('Release notice not issued: the declaration did not pass validation.');
+      } else {
+        const r = await releaseNotice(result.parsed, releaseKey);
+        if (r.skipped) {
+          core.warning(`Release notice not issued: ${r.skipped}.`);
+        } else if (r.error) {
+          result.errors.push(`Release notice: ${r.error}`);
+          result.valid = false;
+        } else {
+          core.setOutput('release-notice', JSON.stringify(r.notice));
+          core.info(`\u2713 Signed release notice for ${r.notice.claims.version}`);
+          const urls = (core.getInput('notify-urls') || '').split(/[\s,]+/).filter(Boolean);
+          await deliver(r.notice, urls);
+        }
       }
     }
 

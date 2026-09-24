@@ -204,6 +204,87 @@ async function verifyIdentity(parsed, { checkRepository }) {
   return { errors, warnings, notes, signatureState };
 }
 
+/**
+ * Issue a signed release notice: "this release shipped with this declaration".
+ * Opt-in — it needs the agent's private key as a CI secret, which not every
+ * operator will want to hold there. Every reason it does not happen is said
+ * out loud; a release notice that silently fails to appear looks exactly like
+ * one that was never configured.
+ */
+async function releaseNotice(parsed, privateKey) {
+  const { keyFingerprint, declarationDigest } = await import('provenance-protocol/verify');
+  const { signNotice } = await import('provenance-protocol/keygen');
+  const { createPrivateKey, createPublicKey } = require('crypto');
+
+  const version = core.getInput('release-version') ||
+    (process.env.GITHUB_REF_TYPE === 'tag' ? process.env.GITHUB_REF_NAME : '');
+  if (!version) {
+    return { skipped: 'no release version — set release-version, or run on a tag' };
+  }
+  const provenanceId = parsed.provenance_id;
+  const publicKey = parsed.identity && parsed.identity.public_key;
+  if (typeof provenanceId !== 'string' || typeof publicKey !== 'string') {
+    return { error: 'a release notice needs provenance_id and identity.public_key in the declaration' };
+  }
+
+  let derived;
+  try {
+    const priv = createPrivateKey({ key: Buffer.from(privateKey, 'base64'), format: 'der', type: 'pkcs8' });
+    derived = Buffer.from(createPublicKey(priv).export({ type: 'spki', format: 'der' })).toString('base64');
+  } catch {
+    return { error: 'release-private-key is not a base64 PKCS8 Ed25519 key' };
+  }
+  if (derived !== publicKey) {
+    return { error: 'release-private-key does not match identity.public_key in the declaration' };
+  }
+
+  let digest;
+  try {
+    digest = await declarationDigest(parsed);
+  } catch (e) {
+    return { error: `declaration cannot be digested: ${e.message}` };
+  }
+
+  const sha = process.env.GITHUB_SHA;
+  const repo = process.env.GITHUB_REPOSITORY;
+  const notice = {
+    notice: '0.1',
+    id: `release-${version}-${(sha || '').slice(0, 12) || Date.now().toString(36)}`,
+    event: 'release',
+    provenance_id: provenanceId,
+    key_fingerprint: await keyFingerprint(publicKey),
+    issued_at: new Date().toISOString().replace(/\.\d{3}Z$/, 'Z'),
+    claims: {
+      version,
+      ...(sha && /^[0-9a-f]{7,64}$/.test(sha) ? { commit: sha } : {}),
+      declaration_digest: digest,
+      ...(repo ? { repository: `${process.env.GITHUB_SERVER_URL || 'https://github.com'}/${repo}` } : {}),
+    },
+  };
+  return { notice: { ...notice, signature: signNotice(privateKey, notice) } };
+}
+
+async function deliver(notice, urls) {
+  for (const url of urls) {
+    try {
+      if (new URL(url).protocol !== 'https:') throw new Error('watcher URLs must be https');
+      const res = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(notice),
+        redirect: 'error',
+        signal: AbortSignal.timeout(10000),
+      });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      core.info(`\u2713 Release notice delivered to ${url}`);
+    } catch (e) {
+      // A watcher being down must not fail the release, but must not pass
+      // unnoticed either.
+      core.warning(`Release notice not delivered to ${url}: ${e.message}`);
+    }
+  }
+}
+
 async function run() {
   try {
     const filePath = core.getInput('file-path') || 'PROVENANCE.yml';
@@ -245,6 +326,27 @@ async function run() {
         // A verifier that cannot run must not be reported as a bad declaration.
         core.warning(`Signature could not be verified: ${e.message}. The declaration was not checked cryptographically.`);
         core.setOutput('signature', 'unchecked');
+      }
+    }
+
+    const releaseKey = core.getInput('release-private-key');
+    if (releaseKey) {
+      core.setSecret(releaseKey);
+      if (!result.valid || !result.parsed) {
+        core.warning('Release notice not issued: the declaration did not pass validation.');
+      } else {
+        const r = await releaseNotice(result.parsed, releaseKey);
+        if (r.skipped) {
+          core.warning(`Release notice not issued: ${r.skipped}.`);
+        } else if (r.error) {
+          result.errors.push(`Release notice: ${r.error}`);
+          result.valid = false;
+        } else {
+          core.setOutput('release-notice', JSON.stringify(r.notice));
+          core.info(`\u2713 Signed release notice for ${r.notice.claims.version}`);
+          const urls = (core.getInput('notify-urls') || '').split(/[\s,]+/).filter(Boolean);
+          await deliver(r.notice, urls);
+        }
       }
     }
 

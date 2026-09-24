@@ -83,5 +83,31 @@ t('rejects an unsigned declaration when required', r.failed);
 r = runAction(signed, { GITHUB_REPOSITORY: 'mallory/fork', 'INPUT_CHECK-REPOSITORY': 'false' });
 t('repository check can be disabled', !r.failed, r.stdout.slice(-200));
 
+// 7. signed release notice — opt-in
+const { verifyNotice, declarationDigest } = await import('provenance-protocol/verify');
+function output(outputs, name) {
+  const m = new RegExp(`${name}<<(\\S+)\\n([\\s\\S]*?)\\n\\1`).exec(outputs);
+  return m ? m[2] : null;
+}
+r = runAction(signed, { 'INPUT_RELEASE-PRIVATE-KEY': privateKey, 'INPUT_RELEASE-VERSION': '4.2.0', GITHUB_SHA: 'a1b2c3d4e5f60718293a4b5c6d7e8f9012345678' });
+const noticeJson = output(r.outputs, 'release-notice');
+t('issues a release notice when given the key', !r.failed && !!noticeJson, r.stdout.slice(-300));
+if (noticeJson) {
+  const notice = JSON.parse(noticeJson);
+  const v = await verifyNotice(notice, { publicKey });
+  t('the release notice verifies against the agent key', v.valid && v.event === 'release', v.reason);
+  t('it ties the release to the declaration digest', notice.claims.declaration_digest === await declarationDigest(signed) && notice.claims.version === '4.2.0' && notice.claims.commit.startsWith('a1b2c3'));
+  // The one permitted occurrence is the ::add-mask:: command, which GitHub
+  // consumes to redact the value everywhere else and never displays.
+  const leaks = r.stdout.split('\n').filter((l) => l.includes(privateKey) && !l.startsWith('::add-mask::'));
+  t('the key is masked and never printed', r.stdout.includes(`::add-mask::${privateKey}`) && leaks.length === 0, leaks.join('|').slice(0, 80));
+}
+r = runAction(signed, { 'INPUT_RELEASE-PRIVATE-KEY': generateProvenanceKeyPair().privateKey, 'INPUT_RELEASE-VERSION': '4.2.0' });
+t('refuses a release key that does not match the declaration', r.failed && r.stdout.includes('does not match'), r.stdout.slice(-300));
+r = runAction(signed, { 'INPUT_RELEASE-PRIVATE-KEY': privateKey, GITHUB_REF_TYPE: 'branch' });
+t('says so when there is no version to release', !r.failed && r.stdout.includes('Release notice not issued') && !output(r.outputs, 'release-notice'), r.stdout.slice(-300));
+r = runAction(signed);
+t('no key, no notice, no noise', !r.failed && !output(r.outputs, 'release-notice') && !r.stdout.includes('Release notice'));
+
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

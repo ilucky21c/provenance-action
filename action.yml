@@ -27,11 +27,23 @@ inputs:
     required: false
     default: 'true'
 
+  release-private-key:
+    description: 'Optional. The agent private key (use a secret). When set, issues a signed release notice tying this release to the declaration digest.'
+    required: false
+  release-version:
+    description: 'Version for the release notice. Defaults to the tag name when the workflow runs on a tag.'
+    required: false
+  notify-urls:
+    description: 'Optional. HTTPS endpoints of watchers you choose to receive the release notice, separated by commas or whitespace.'
+    required: false
+
 outputs:
   valid:
     description: 'Whether the PROVENANCE.yml is valid'
   errors:
     description: 'Validation errors, if any'
+  release-notice:
+    description: 'The signed release notice as JSON, when one was issued'
   signature:
     description: "Signature result: 'declaration' (0.2, whole file covered), 'identity' (0.1, identity only), 'invalid', or 'none'" 
 
