@@ -7,27 +7,16 @@ const yaml = require('js-yaml');
 // 0.1 signs only the identity, leaving capabilities and constraints unprotected.
 const KNOWN_SPEC_VERSIONS = ['0.1', '0.2'];
 
-// Standard capability vocabulary — https://getprovenance.dev/docs#capabilities
+// Standard vocabulary, read from the standard itself so the two cannot drift.
+// See SPEC.md, Capability Vocabulary, in provenance-protocol.
+const VOCABULARY = require('provenance-protocol/vocabulary.json');
 const CANONICAL_CAPABILITIES = [
-  'read:web',
-  'write:code',
-  'write:files',
-  'write:email',
-  'write:summaries',
-  'execute:shell',
-  'execute:browser',
-  'delegate:agents',
-  'ajp:receiver',
-  'ajp:sender',
+  ...Object.keys(VOCABULARY.capabilities),
+  ...Object.values(VOCABULARY.namespaces ?? {}).flatMap((ns) => Object.keys(ns)),
 ];
-
-// Standard constraint vocabulary — https://getprovenance.dev/docs#capabilities
 const CANONICAL_CONSTRAINTS = [
-  'no:pii',
-  'no:financial:transact',
-  'no:external:network',
-  'no:persist:data',
-  'no:user:impersonation',
+  ...Object.keys(VOCABULARY.capabilities).map((c) => `no:${c}`),
+  ...Object.keys(VOCABULARY.constraints?.additional ?? {}),
 ];
 
 function validateProvenanceYml(content) {
@@ -125,7 +114,7 @@ function validateProvenanceYml(content) {
 
   // provenance_id recommendation
   if (!parsed.provenance_id) {
-    warnings.push('Recommended field missing: provenance_id (e.g. provenance:github:your-org/your-agent)');
+    warnings.push('Recommended field missing: provenance_id (e.g. provenance:github:your-org/your-agent or provenance:domain:agent.example.com)');
   }
 
   // Identity block validation (for verified agents)

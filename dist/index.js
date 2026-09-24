@@ -31628,6 +31628,14 @@ function parseParams (str) {
 module.exports = parseParams
 
 
+/***/ }),
+
+/***/ 7706:
+/***/ ((module) => {
+
+"use strict";
+module.exports = /*#__PURE__*/JSON.parse('{"$comment":"Standard vocabulary for PROVENANCE.yml capabilities and constraints. Normative source: SPEC.md, Capability Vocabulary. Custom terms are allowed with a domain prefix (acme:custom-capability).","version":"0.2","capabilities":{"read:web":"fetch public web content","read:files":"read local files","read:database":"query databases","read:email":"read email (requires auth)","read:calendar":"read calendar (requires auth)","read:code":"read code repositories","read:pdf":"parse PDF documents","read:images":"process images","read:audio":"process audio","write:files":"write local files","write:database":"write to databases","write:email":"send email","write:code":"modify code","write:summaries":"generate written content","write:external":"any external system write","execute:code":"run code in a sandbox","execute:terminal":"run terminal commands","execute:browser":"control a browser","financial:read":"read financial data","financial:transact":"initiate financial transactions","delegate:agents":"can spawn or hire sub-agents","delegate:humans":"can request human approval"},"constraints":{"rule":"Any standard capability prefixed with no: is a standard constraint — a commitment never to exercise it.","additional":{"no:pii":"will never collect personal data"}},"namespaces":{"ajp":{"ajp:receiver":"accepts jobs under the Agent Job Protocol","ajp:sender":"sends jobs under the Agent Job Protocol"}}}');
+
 /***/ })
 
 /******/ 	});
@@ -31762,27 +31770,16 @@ const yaml = __nccwpck_require__(4281);
 // 0.1 signs only the identity, leaving capabilities and constraints unprotected.
 const KNOWN_SPEC_VERSIONS = ['0.1', '0.2'];
 
-// Standard capability vocabulary — https://getprovenance.dev/docs#capabilities
+// Standard vocabulary, read from the standard itself so the two cannot drift.
+// See SPEC.md, Capability Vocabulary, in provenance-protocol.
+const VOCABULARY = __nccwpck_require__(7706);
 const CANONICAL_CAPABILITIES = [
-  'read:web',
-  'write:code',
-  'write:files',
-  'write:email',
-  'write:summaries',
-  'execute:shell',
-  'execute:browser',
-  'delegate:agents',
-  'ajp:receiver',
-  'ajp:sender',
+  ...Object.keys(VOCABULARY.capabilities),
+  ...Object.values(VOCABULARY.namespaces ?? {}).flatMap((ns) => Object.keys(ns)),
 ];
-
-// Standard constraint vocabulary — https://getprovenance.dev/docs#capabilities
 const CANONICAL_CONSTRAINTS = [
-  'no:pii',
-  'no:financial:transact',
-  'no:external:network',
-  'no:persist:data',
-  'no:user:impersonation',
+  ...Object.keys(VOCABULARY.capabilities).map((c) => `no:${c}`),
+  ...Object.keys(VOCABULARY.constraints?.additional ?? {}),
 ];
 
 function validateProvenanceYml(content) {
@@ -31880,7 +31877,7 @@ function validateProvenanceYml(content) {
 
   // provenance_id recommendation
   if (!parsed.provenance_id) {
-    warnings.push('Recommended field missing: provenance_id (e.g. provenance:github:your-org/your-agent)');
+    warnings.push('Recommended field missing: provenance_id (e.g. provenance:github:your-org/your-agent or provenance:domain:agent.example.com)');
   }
 
   // Identity block validation (for verified agents)

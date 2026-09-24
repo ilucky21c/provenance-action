@@ -13,7 +13,7 @@ __webpack_require__.d(__webpack_exports__, {
   verifyDeclaration: () => (/* binding */ verifyDeclaration)
 });
 
-// UNUSED EXPORTS: keyFingerprint, parseProvenanceId, verifyAgentChallenge, verifyAgentRevocation, verifyChallenge, verifyRevocation
+// UNUSED EXPORTS: checkDeclaration, declarationDigest, keyFingerprint, locateDeclaration, parseProvenanceId, verifyAgentChallenge, verifyAgentRevocation, verifyAttestation, verifyAttestationWithdrawal, verifyChallenge, verifyRevocation
 
 ;// CONCATENATED MODULE: ./node_modules/provenance-protocol/src/canonical.js
 /**
@@ -31,7 +31,9 @@ __webpack_require__.d(__webpack_exports__, {
  * what anyone would expect.
  *
  * Rules:
- *   - object keys sorted by Unicode code point, recursively
+ *   - JSON Canonicalization Scheme (JCS, RFC 8785): object keys sorted by
+ *     UTF-16 code units, recursively — which is what Array.prototype.sort()
+ *     does by default — and strings/numbers serialised as JSON.stringify does
  *   - no insignificant whitespace
  *   - `identity.signature` removed before signing (it cannot cover itself)
  *   - only JSON-representable values; anything else throws rather than being
@@ -64,6 +66,9 @@ const DOMAIN = 'provenance-declaration-v1';
  */
 const CHALLENGE_DOMAIN = 'provenance-challenge-v1';
 const REVOCATION_DOMAIN = 'provenance-revocation-v1';
+
+const ATTESTATION_DOMAIN = 'provenance-attestation-v1';
+const ATTESTATION_WITHDRAWAL_DOMAIN = 'provenance-attestation-withdrawal-v1';
 
 /** Payload for proving live control of a key. Nonce must be single-use. */
 function canonical_challengePayload(provenanceId, nonce) {
@@ -129,7 +134,7 @@ function canonicalValue(value, path = '$') {
  * @param {object} declaration  Parsed declaration (its identity.signature is ignored)
  * @returns {string}
  */
-function declarationSigningPayload(declaration) {
+function canonical_declarationSigningPayload(declaration) {
   if (declaration === null || typeof declaration !== 'object' || Array.isArray(declaration)) {
     throw new CanonicalError('Declaration must be a parsed object');
   }
@@ -147,6 +152,53 @@ function declarationSigningPayload(declaration) {
   }
 
   return `${DOMAIN}:${canonicalValue(covered)}`;
+}
+
+/**
+ * The exact string an attestation signature is computed over: the canonical
+ * form of the whole attestation with its own `signature` removed.
+ *
+ * Its own prefix means an attestation signature can never be passed off as a
+ * declaration, a challenge or a revocation signed by the same key — an issuer
+ * is usually also an agent with a declaration of its own.
+ *
+ * @param {object} attestation
+ * @returns {string}
+ */
+function canonical_attestationSigningPayload(attestation) {
+  if (attestation === null || typeof attestation !== 'object' || Array.isArray(attestation)) {
+    throw new CanonicalError('Attestation must be a parsed object');
+  }
+  const { signature: _excluded, ...covered } = attestation;
+  return `${ATTESTATION_DOMAIN}:${canonicalValue(covered)}`;
+}
+
+/**
+ * Payload an issuer signs to withdraw one of its own attestations before it
+ * expires. Carries nothing but the two identifiers.
+ */
+function canonical_attestationWithdrawalPayload(issuerId, attestationId) {
+  if (typeof issuerId !== 'string' || issuerId.length === 0) {
+    throw new CanonicalError('issuerId is required');
+  }
+  if (typeof attestationId !== 'string' || attestationId.length === 0) {
+    throw new CanonicalError('attestationId is required');
+  }
+  // Canonical JSON rather than a colon-joined string: identifiers contain
+  // colons, and "a:b" + "c" must not sign the same bytes as "a" + "b:c".
+  return `${ATTESTATION_WITHDRAWAL_DOMAIN}:${canonicalValue({ attestation_id: attestationId, issuer: issuerId })}`;
+}
+
+/**
+ * Canonical JSON (JCS, RFC 8785) of any plain value: keys sorted by UTF-16 code
+ * units at every depth, no insignificant whitespace. The building block the signing payloads use,
+ * exported for protocols layered on this one that need the same guarantee.
+ *
+ * @param {unknown} value
+ * @returns {string}
+ */
+function canonicalJson(value) {
+  return canonicalValue(value);
 }
 
 
@@ -431,7 +483,7 @@ async function verifyDeclaration(declaration, options = {}) {
   try {
     payload =
       coverage === 'declaration'
-        ? declarationSigningPayload(declaration)
+        ? canonical_declarationSigningPayload(declaration)
         : `${provenanceId}:${publicKey}`;
   } catch (e) {
     return { ...result, reason: `Declaration cannot be canonicalised: ${e.message}` };
@@ -535,6 +587,276 @@ async function verifyChallenge(publicKeyBase64, provenanceId, nonce, signatureBa
 async function verifyRevocation(publicKeyBase64, provenanceId, signatureBase64) {
   try {
     return await verifyEd25519(publicKeyBase64, signatureBase64, `${provenanceId}:REVOKE`);
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Where a declaration is published, derived from its provenance id alone.
+ *
+ * This is what lets anyone find an agent's declaration without asking an index:
+ * the identifier names the location, and the location holds the document.
+ *
+ *   provenance:domain:<host>[/<path>]  → https://<host>[/<path>]/.well-known/provenance.json
+ *   provenance:github:<owner>/<repo>   → PROVENANCE.yml at the default branch
+ *
+ * Returns null for platforms with no single fetchable location (npm, pypi,
+ * huggingface, …). There the caller must be told where the file is.
+ *
+ * @param {string} provenanceId
+ * @returns {string | null}
+ */
+function locateDeclaration(provenanceId) {
+  const id = parseProvenanceId(provenanceId);
+  if (!id) return null;
+
+  if (id.platform === 'domain') {
+    const [host, ...path] = id.path.split('/').filter(Boolean);
+    if (!host || !/^[a-z0-9.-]+(:\d+)?$/i.test(host)) return null;
+    const prefix = path.length ? `/${path.map(encodeURIComponent).join('/')}` : '';
+    return `https://${host.toLowerCase()}${prefix}/.well-known/provenance.json`;
+  }
+
+  if (id.platform === 'github') {
+    const parts = id.path.split('/').filter(Boolean);
+    if (parts.length !== 2) return null;
+    const [owner, repo] = parts.map(encodeURIComponent);
+    return `https://raw.githubusercontent.com/${owner}/${repo}/HEAD/PROVENANCE.yml`;
+  }
+
+  return null;
+}
+
+/**
+ * A stable fingerprint of a declaration's content: SHA-256 of its signing
+ * payload, as `sha256:<hex>`.
+ *
+ * Two declarations that differ only in formatting, comments, key order or
+ * signature have the same digest; any change to any field gives a different
+ * one. An attestation or a decision records this to say exactly which state of
+ * a declaration it was about.
+ *
+ * @param {object} declaration  Parsed declaration
+ * @returns {Promise<string>}
+ */
+async function declarationDigest(declaration) {
+  const bytes = new TextEncoder().encode(declarationSigningPayload(declaration));
+  return `sha256:${toHex(new Uint8Array(await subtle().digest('SHA-256', bytes)))}`;
+}
+
+/**
+ * Decide whether to accept an agent on the strength of its declaration alone.
+ *
+ * Offline: the declaration and where it was fetched from are all it uses. It
+ * answers "is this genuinely the operator's, and does it promise what I
+ * require?" — not "is it currently in good standing", which no document can
+ * carry and which comes from whichever attesters the caller chooses to trust.
+ *
+ * Every refusal names its reason. A declaration that could not be checked is
+ * refused, never waved through.
+ *
+ * @param {object} declaration  Parsed declaration
+ * @param {object} [options]
+ * @param {string}   [options.retrievedFrom]        URL it was fetched from
+ * @param {boolean}  [options.requireSignature=true]
+ * @param {boolean}  [options.requireLocation=true] Must be served from where its id says
+ * @param {'declaration'|'identity'} [options.requireCoverage='declaration']
+ *        'declaration' refuses 0.1 signatures, which do not protect constraints
+ * @param {string[]} [options.requireConstraints=[]]
+ * @param {string[]} [options.requireCapabilities=[]]
+ * @param {string}   [options.expectedFingerprint]  Key seen before; a different one is a rotation
+ * @returns {Promise<{ allowed: boolean, reason: string | null, verification: object }>}
+ */
+async function checkDeclaration(declaration, options = {}) {
+  const {
+    retrievedFrom,
+    requireSignature = true,
+    requireLocation = true,
+    requireCoverage = 'declaration',
+    requireConstraints = [],
+    requireCapabilities = [],
+    expectedFingerprint,
+  } = options;
+
+  const verification = await verifyDeclaration(declaration, { retrievedFrom });
+  const refuse = (reason) => ({ allowed: false, reason, verification });
+
+  if (requireSignature) {
+    if (!verification.valid) return refuse(verification.reason ?? 'Signature did not verify');
+    if (requireCoverage === 'declaration' && verification.coverage !== 'declaration') {
+      return refuse('Signature covers only the identity (spec 0.1), so the declared constraints are not protected');
+    }
+  }
+
+  if (requireLocation && verification.location !== 'match') {
+    return refuse(
+      !retrievedFrom
+        ? 'Retrieval location not given, so the declaration cannot be tied to its operator'
+        : verification.location === 'mismatch'
+          ? 'Declaration was not served from the location its provenance id names'
+          : 'Retrieval location could not be interpreted for this provenance id'
+    );
+  }
+
+  if (expectedFingerprint && verification.fingerprint !== expectedFingerprint) {
+    return refuse('Declaration is signed with a different key than previously seen — a key rotation');
+  }
+
+  const constraints = Array.isArray(declaration?.constraints) ? declaration.constraints : [];
+  for (const c of requireConstraints) {
+    if (!constraints.includes(c)) return refuse(`Agent has not committed to constraint: ${c}`);
+  }
+  const capabilities = Array.isArray(declaration?.capabilities) ? declaration.capabilities : [];
+  for (const c of requireCapabilities) {
+    if (!capabilities.includes(c)) return refuse(`Agent does not declare capability: ${c}`);
+  }
+
+  return { allowed: true, reason: null, verification };
+}
+
+/** Attestation format versions this verifier understands. */
+const ATTESTATION_VERSIONS = new Set(['0.1']);
+
+/** Tolerated clock difference between issuer and verifier. */
+const CLOCK_SKEW_MS = (/* unused pure expression or super */ null && (5 * 60 * 1000));
+
+function parseTime(value) {
+  if (typeof value !== 'string') return null;
+  // RFC 3339 with an explicit offset; a bare local time means different
+  // instants to different verifiers.
+  if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?(Z|[+-]\d{2}:\d{2})$/.test(value)) return null;
+  const t = Date.parse(value);
+  return Number.isNaN(t) ? null : t;
+}
+
+/**
+ * Verify an attestation offline: a signed statement by a third party (the
+ * issuer) about an agent (the subject).
+ *
+ * The caller supplies the issuer's public key — normally taken from the
+ * issuer's own verified declaration, and pinned. Nothing is fetched.
+ *
+ * `status` keeps apart outcomes that must never be confused:
+ *   'valid'          genuine, and inside its validity window
+ *   'expired'        genuine, but past valid_until — stale, not forged
+ *   'not_yet_valid'  genuine, but issued_at is in the future
+ *   'invalid'        not genuine, malformed, or signed by another key
+ *   'unchecked'      could not be checked (no issuer key, unknown version)
+ *
+ * A valid attestation proves the issuer said this, when, about which state of
+ * the subject. It does not prove the issuer is right, and it does not prove the
+ * issuer has not withdrawn it since — that is what `status_url` is for.
+ *
+ * @param {object} attestation
+ * @param {object} options
+ * @param {string} options.issuerPublicKey  Base64 SPKI DER Ed25519 key of the issuer
+ * @param {Date|number} [options.now]       Defaults to the current time
+ * @returns {Promise<{
+ *   status: 'valid'|'expired'|'not_yet_valid'|'invalid'|'unchecked',
+ *   valid: boolean,
+ *   reason: string | null,
+ *   kind: string | null,
+ *   issuer: string | null,
+ *   subject: object | null,
+ *   validUntil: string | null
+ * }>}
+ */
+async function verifyAttestation(attestation, options = {}) {
+  const out = (status, reason, extra = {}) => ({
+    status,
+    valid: status === 'valid',
+    reason,
+    kind: null,
+    issuer: null,
+    subject: null,
+    validUntil: null,
+    ...extra,
+  });
+
+  if (attestation === null || typeof attestation !== 'object' || Array.isArray(attestation)) {
+    return out('invalid', 'Attestation must be a parsed object');
+  }
+
+  const a = attestation;
+  const facts = {
+    kind: typeof a.kind === 'string' ? a.kind : null,
+    issuer: typeof a.issuer?.provenance_id === 'string' ? a.issuer.provenance_id : null,
+    subject: a.subject && typeof a.subject === 'object' ? a.subject : null,
+    validUntil: typeof a.valid_until === 'string' ? a.valid_until : null,
+  };
+
+  if (!ATTESTATION_VERSIONS.has(a.attestation)) {
+    return out('unchecked', `Attestation version ${a.attestation ?? '(missing)'} is not known to this verifier`, facts);
+  }
+
+  const missing = [];
+  if (typeof a.id !== 'string' || !a.id) missing.push('id');
+  if (!facts.kind) missing.push('kind');
+  if (!facts.issuer) missing.push('issuer.provenance_id');
+  if (typeof a.issuer?.key_fingerprint !== 'string') missing.push('issuer.key_fingerprint');
+  if (!facts.subject || (typeof facts.subject.provenance_id !== 'string' && typeof facts.subject.url !== 'string')) {
+    missing.push('subject.provenance_id or subject.url');
+  }
+  if (typeof a.scope !== 'string' || !a.scope) missing.push('scope');
+  if (!a.claims || typeof a.claims !== 'object' || Array.isArray(a.claims)) missing.push('claims');
+  if (typeof a.signature !== 'string' || !a.signature) missing.push('signature');
+  if (missing.length) return out('invalid', `Missing or malformed: ${missing.join(', ')}`, facts);
+
+  const issuedAt = parseTime(a.issued_at);
+  const validUntil = parseTime(a.valid_until);
+  if (issuedAt === null || validUntil === null) {
+    return out('invalid', 'issued_at and valid_until must be RFC 3339 timestamps with an offset', facts);
+  }
+  if (validUntil <= issuedAt) return out('invalid', 'valid_until is not after issued_at', facts);
+
+  const { issuerPublicKey } = options;
+  if (typeof issuerPublicKey !== 'string' || !issuerPublicKey) {
+    return out('unchecked', 'No issuer public key supplied — the signature was not checked', facts);
+  }
+
+  let fingerprint;
+  try {
+    fingerprint = await keyFingerprint(issuerPublicKey);
+  } catch {
+    return out('unchecked', 'Issuer public key is not valid base64', facts);
+  }
+  if (fingerprint !== a.issuer.key_fingerprint) {
+    return out('invalid', 'Attestation names a different issuer key than the one supplied', facts);
+  }
+
+  let genuine;
+  try {
+    genuine = await verifyEd25519(issuerPublicKey, a.signature, attestationSigningPayload(a));
+  } catch (e) {
+    return out('invalid', `Signature could not be checked: ${e.message}`, facts);
+  }
+  if (!genuine) return out('invalid', 'Signature does not verify', facts);
+
+  // Only now are the dates meaningful: an attacker can write any date, so a
+  // forged attestation must read as forged, never as merely expired.
+  const now = options.now === undefined ? Date.now() : Number(options.now);
+  if (issuedAt > now + CLOCK_SKEW_MS) return out('not_yet_valid', 'issued_at is in the future', facts);
+  if (now > validUntil) return out('expired', `Expired at ${a.valid_until}`, facts);
+
+  return out('valid', null, facts);
+}
+
+/**
+ * Verify an issuer's withdrawal of one of its attestations.
+ *
+ * Confirms the withdrawal is genuine. Whether one has been issued is learned
+ * from the attestation's `status_url`, not from the attestation itself.
+ *
+ * @param {string} issuerPublicKey
+ * @param {string} issuerId        issuer.provenance_id of the attestation
+ * @param {string} attestationId   id of the attestation
+ * @param {string} signatureBase64
+ * @returns {Promise<boolean>}
+ */
+async function verifyAttestationWithdrawal(issuerPublicKey, issuerId, attestationId, signatureBase64) {
+  try {
+    return await verifyEd25519(issuerPublicKey, signatureBase64, attestationWithdrawalPayload(issuerId, attestationId));
   } catch {
     return false;
   }

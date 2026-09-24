@@ -8,7 +8,7 @@ two failures that a shape check cannot see:
 
 Both look perfectly well-formed to a validator.
 
-Validates your `PROVENANCE.yml` file against the [Provenance Protocol](https://getprovenance.dev) specification in CI/CD.
+Validates your `PROVENANCE.yml` file against the [Provenance Protocol](https://github.com/ilucky21c/provenance-protocol/blob/main/SPEC.md) specification in CI/CD.
 
 ## Usage
 
@@ -22,8 +22,8 @@ jobs:
   validate:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v3
-      - uses: provenance-protocol/action@v1
+      - uses: actions/checkout@v4
+      - uses: ilucky21c/provenance-action@v1
         with:
           file-path: 'PROVENANCE.yml'  # default
           fail-on-error: 'true'         # default
@@ -32,7 +32,7 @@ jobs:
 ## What it checks
 
 ### Required Fields
-- `provenance`: Protocol version (e.g., `"1.0"`)
+- `provenance`: Spec version — `"0.2"` for new declarations, `"0.1"` legacy
 - `name`: Agent name
 - `description`: Agent description
 
@@ -64,14 +64,15 @@ The action warns about non-standard capabilities and constraints, encouraging us
 ## Example PROVENANCE.yml
 
 ```yaml
-provenance: "1.0"
+provenance: "0.2"
 name: "Research Assistant"
 description: "Autonomous research agent that gathers and summarizes information"
 version: "2.1.0"
+provenance_id: "provenance:github:alice/research-assistant"
 
 capabilities:
   - read:web
-  - api:external
+  - write:summaries
 
 constraints:
   - no:financial:transact

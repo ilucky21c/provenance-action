@@ -2,7 +2,9 @@ name: Publish to npm
 
 on:
   push:
-    tags: ['v*']
+    # Release tags only (v1.2.0). The moving major tag (v1) that workflows
+    # reference with `uses: …@v1` must not trigger a second publish.
+    tags: ['v*.*.*']
 
 jobs:
   publish:
