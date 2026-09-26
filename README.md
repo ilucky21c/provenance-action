@@ -8,7 +8,7 @@ two failures that a shape check cannot see:
 
 Both look perfectly well-formed to a validator.
 
-Validates your `PROVENANCE.yml` file against the [Provenance Protocol](https://github.com/ilucky21c/provenance-protocol/blob/main/SPEC.md) specification in CI/CD.
+Validates your `PROVENANCE.yml` file against the [Provenance Protocol](https://github.com/provenance-protocol/provenance-protocol/blob/main/SPEC.md) specification in CI/CD.
 
 ## Usage
 
@@ -23,7 +23,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: ilucky21c/provenance-action@v1
+      - uses: provenance-protocol/provenance-action@v1
         with:
           file-path: 'PROVENANCE.yml'  # default
           fail-on-error: 'true'         # default
@@ -68,7 +68,7 @@ this release to the exact declaration it shipped with — which build carried
 which promises. Send it to any watchers you choose, or none.
 
 ```yaml
-      - uses: ilucky21c/provenance-action@v1
+      - uses: provenance-protocol/provenance-action@v1
         with:
           release-private-key: ${{ secrets.PROVENANCE_PRIVATE_KEY }}
           notify-urls: 'https://watcher.example/notices'   # optional

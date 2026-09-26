@@ -26,10 +26,10 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/ilucky21c/provenance-action.git"
+    "url": "git+https://github.com/provenance-protocol/provenance-action.git"
   },
-  "homepage": "https://github.com/ilucky21c/provenance-action#readme",
+  "homepage": "https://github.com/provenance-protocol/provenance-action#readme",
   "bugs": {
-    "url": "https://github.com/ilucky21c/provenance-action/issues"
+    "url": "https://github.com/provenance-protocol/provenance-action/issues"
   }
 }
